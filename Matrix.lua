@@ -20,6 +20,7 @@
 -- A.dot(B)
 -- A.cross(B)
 
+
 local Mat = {}
 
 function Mat.new(h, w, ...)
@@ -32,6 +33,28 @@ end
 
 function Mat.row(...)
 	return Mat.new(1, select("#", ...), ...)
+end
+
+function Mat.fromCol(...)
+	local h = #(...) -- eh whatever.
+	local w = select("#", ...)
+	local M = Mat.new(h, w)
+	for row = 1, h do
+		for col = 1, w do
+			local v = select(col, ...)
+			M[w*(row - 1) + col] = v[row]
+		end
+	end
+
+	return M
+end
+
+function Mat.null(h, w)
+	local M = setmetatable({h = h; w = w;}, Mat)
+	for i = 1, h*w do
+		M[i] = 0
+	end
+	return M
 end
 
 function Mat.identity(s)
@@ -52,12 +75,60 @@ function Mat.constructor(h, w)
 	end
 end
 
---function Mat:copy()
---	return Mat.new(self.h, self.w, table.unpack(self))
---end
+function Mat.fromAngle(a)
+	local co = math.cos(a)
+	local si = math.sin(a)
+	return Mat.new(2, 2,
+		co, -si,
+		si,  co)
+end
+
+function Mat.fromRotationVector(r)
+	local a = r.norm
+	if a < 1e-8 then
+		return Mat.identity(3)
+	end
+	
+	local v = r.unit
+	local V = v.crossMatrix
+	local co = math.cos(a)
+	local si = math.sin(a)
+	return v*v.T + co*V*V.T + si*V
+end
+
+-- creates a scaling rotation matrix which transforms u into v
+-- for a pure rotation matrix, give u and v as unit vectors
+function Mat.rotate(u, v)
+	-- NOTE: there is a more stable way of doing this which relies on inner product
+	-- but complexity squares with the dimension of u and v
+	local uu = u:dot(u)
+	local uv = u:dot(v)
+	local vv = v:dot(v)
+	local w = 2*uv/uu*v - vv/uu*u -- geometric algebra: v*u^-1*v
+
+	local A = Mat.fromCol(u, v)
+	local B = Mat.fromCol(v, w)
+	local T = (A.T*A).I*A.T -- T*p gives t such that A*t = (p projected onto plane u, v)
+
+	return 1 + (B - A)*T
+end
+
+function Mat:copy()
+	return Mat.new(self.h, self.w, table.unpack(self))
+end
 
 function Mat:__call(row, col, ...)
 	return self[self.w*(row - 1) + col]
+end
+
+-- returns the submatrix
+function Mat.sub(A, i, j, h, w)
+	local S = Mat.new(h, w)
+	for row = 1, h do
+		for col = 1, w do
+			S[w*(row - 1) + col] = A[A.w*(i + row - 2) + j + col - 1]
+		end
+	end
 end
 
 -- right now only defined in 3D
@@ -92,7 +163,7 @@ function Mat:__index(index)
 		local T = Mat.new(w, h)
 		for row = 1, h do
 			for col = 1, w do
-				T[w*(col - 1) + row] = self[w*(row - 1) + col]
+				T[h*(col - 1) + row] = self[w*(row - 1) + col]
 			end
 		end
 		return T
@@ -195,6 +266,9 @@ function Mat:__index(index)
 		return math.sqrt(sum)
 	elseif index == "unit" then
 		local norm = self.norm
+		if norm == 0 then
+			return Mat.null(h, w)
+		end
 		local U = Mat.new(h, w)
 		for i = 1, h*w do
 			U[i] = self[i]/norm
